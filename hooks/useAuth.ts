@@ -1,15 +1,13 @@
+"use client";
+
 import { useState, useEffect } from "react";
 import { User } from "@/types/models";
 import { UseAuthReturn } from "@/types/auth";
-import { createBrowserClient } from "@supabase/ssr";
+import { createSupabaseClient } from "@/lib/supabaseClient";
 
 export function useAuth(): UseAuthReturn {
-  const supabase = createBrowserClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-  );
+  const supabase = createSupabaseClient();
 
-  // State
   const [session, setSession] = useState<any>(null);
   const [user, setUser] = useState<User | null>(null);
   const [email, setEmail] = useState("");
@@ -19,7 +17,6 @@ export function useAuth(): UseAuthReturn {
   const [error, setError] = useState<string | null>(null);
   const [isSignUpMode, setIsSignUpMode] = useState(false);
 
-  // Helper functions
   const clearError = () => setError(null);
 
   const fetchUserProfile = async (userId: string, userEmail: string) => {
@@ -41,8 +38,8 @@ export function useAuth(): UseAuthReturn {
         email: userEmail,
         tasks_created: usageResponse.data?.tasks_created || 0,
       });
-    } catch (error) {
-      console.error("Critical error fetching user profile:", error);
+    } catch (err) {
+      console.error("Critical error fetching user profile:", err);
       await signOut();
     } finally {
       setIsLoading(false);
@@ -62,7 +59,6 @@ export function useAuth(): UseAuthReturn {
     }
   };
 
-  // Auth methods
   const signOut = async () => {
     try {
       await supabase.auth.signOut();
@@ -71,50 +67,61 @@ export function useAuth(): UseAuthReturn {
       setIsLoggedIn(false);
       setEmail("");
       setPassword("");
-      window.localStorage.removeItem("supabase.auth.token");
-    } catch (error: any) {
-      setError(error.message);
-      console.error("Error signing out:", error);
+    } catch (err: any) {
+      setError(err.message);
+      console.error("Error signing out:", err);
     }
   };
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     clearError();
+
     try {
       const { error } = await supabase.auth.signInWithPassword({
         email,
         password,
       });
-      if (error) setError(error.message);
-      console.log("✅ User logged in:", email, user);
-    } catch (error: any) {
-      setError(error.message);
-      console.error("Error logging in:", error);
+
+      if (error) {
+        setError(error.message);
+      }
+    } catch (err: any) {
+      setError(err.message);
+      console.error("Error logging in:", err);
     }
   };
 
   const handleGoogleLogin = async () => {
+    clearError();
+
     try {
-      await supabase.auth.signInWithOAuth({
+      const { error } = await supabase.auth.signInWithOAuth({
         provider: "google",
         options: {
           redirectTo: `${window.location.origin}/dashboard`,
         },
       });
-    } catch (error: any) {
-      setError(error.message);
-      console.error("Error with Google login:", error);
+
+      if (error) {
+        setError(error.message);
+      }
+    } catch (err: any) {
+      setError(err.message);
+      console.error("Error with Google login:", err);
     }
   };
 
   const handleSignup = async () => {
     clearError();
+
     try {
       const { error } = await supabase.auth.signUp({
         email,
         password,
-        options: { emailRedirectTo: `${window.location.origin}/` },
+        options: {
+          emailRedirectTo: `${window.location.origin}/`,
+        },
       });
 
       if (error) {
@@ -122,24 +129,30 @@ export function useAuth(): UseAuthReturn {
       } else {
         setError("Please check your email to confirm your account");
       }
-    } catch (error: any) {
-      setError(error.message);
-      console.error("Error signing up:", error);
+    } catch (err: any) {
+      setError(err.message);
+      console.error("Error signing up:", err);
     }
   };
 
-  // Initialize auth state
   useEffect(() => {
+    let mounted = true;
+
     const initAuth = async () => {
       try {
         const {
           data: { session },
         } = await supabase.auth.getSession();
-        await updateSessionState(session);
-      } catch (error: any) {
-        console.error("Error initializing auth:", error);
-        setError(error.message);
-        await signOut();
+
+        if (mounted) {
+          await updateSessionState(session);
+        }
+      } catch (err: any) {
+        console.error("Error initializing auth:", err);
+        if (mounted) {
+          setError(err.message);
+          await signOut();
+        }
       }
     };
 
@@ -147,15 +160,19 @@ export function useAuth(): UseAuthReturn {
 
     const {
       data: { subscription },
-    } = supabase.auth.onAuthStateChange((_event, session) => {
-      updateSessionState(session);
+    } = supabase.auth.onAuthStateChange((_event, nextSession) => {
+      if (mounted) {
+        updateSessionState(nextSession);
+      }
     });
 
-    return () => subscription.unsubscribe();
-  }, []);
+    return () => {
+      mounted = false;
+      subscription.unsubscribe();
+    };
+  }, [supabase]);
 
   return {
-    // State
     user,
     session,
     email,
@@ -164,8 +181,6 @@ export function useAuth(): UseAuthReturn {
     isLoading,
     error,
     isSignUpMode,
-
-    // Operations
     signOut,
     handleLogin,
     handleGoogleLogin,

@@ -116,8 +116,8 @@ stripe prices create \
 
 ```bash
 stripe billing_portal configurations create \
-  -d "business_profile[privacy_policy_url]=https://your-site.com/privacy" \
-  -d "business_profile[terms_of_service_url]=https://your-site.com/terms" \
+  -d "business_profile[privacy_policy_url]=https://ntkxmnuuzrzrrtzhaqap.supabase.co/privacy" \
+  -d "business_profile[terms_of_service_url]=https://ntkxmnuuzrzrrtzhaqap.supabase.co/terms" \
   -d "default_return_url=http://localhost:3000/profile" \
   -d "features[subscription_cancel][enabled]=true" \
   -d "features[payment_method_update][enabled]=true"

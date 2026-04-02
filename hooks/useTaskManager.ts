@@ -1,15 +1,16 @@
+"use client";
+
 import { useState, useEffect } from "react";
 import { Task } from "@/types/models";
-import { createBrowserClient } from '@supabase/ssr'
 import {
   TaskState,
   TasksState,
   TaskOperations,
   TasksOperations,
 } from "@/types/taskManager";
+import { createSupabaseClient } from "@/lib/supabaseClient";
 
 const MAX_FILE_SIZE = 1024 * 1024; // 1MB
-const FUNCTION_ENDPOINT = `${process.env.NEXT_PUBLIC_SUPABASE_URL}/functions/v1/create-task-with-ai`;
 
 interface UseTaskManagerReturn
   extends TaskState,
@@ -18,53 +19,46 @@ interface UseTaskManagerReturn
     TasksOperations {}
 
 export function useTaskManager(taskId?: string): UseTaskManagerReturn {
-  // State for single task management
+  const supabase = createSupabaseClient();
+
   const [task, setTask] = useState<Task | null>(null);
   const [date, setDate] = useState<Date | undefined>(undefined);
-
-  // State for task list management
   const [tasks, setTasks] = useState<Task[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  const supabase = createBrowserClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-  );
-
-  // Fetch single task
   useEffect(() => {
     if (!taskId) return;
 
     const fetchTask = async () => {
       try {
-        const { data: task, error } = await supabase
+        const { data, error } = await supabase
           .from("tasks")
           .select("*")
           .eq("task_id", taskId)
           .single();
 
         if (error) throw error;
-        setTask(task);
-        setDate(task.due_date ? new Date(task.due_date) : undefined);
-      } catch (error: any) {
-        console.error(`Error fetching task ID ${taskId}:`, error);
-        setError(error.message);
+
+        setTask(data);
+        setDate(data.due_date ? new Date(data.due_date) : undefined);
+        setError(null);
+      } catch (err: any) {
+        console.error(`Error fetching task ID ${taskId}:`, err);
+        setError(err.message);
       } finally {
         setIsLoading(false);
       }
     };
 
     fetchTask();
+  }, [taskId, supabase]);
+
+  useEffect(() => {
+    if (taskId) return;
+    fetchTasks();
   }, [taskId]);
 
-  // Fetch all tasks
-  useEffect(() => {
-    if (taskId) return; // Don't fetch all tasks if we're managing a single task
-    fetchTasks();
-  }, []);
-
-  // Single task operations
   const updateTask = (updates: Partial<Task>) => {
     setTask((prev) => (prev ? { ...prev, ...updates } : null));
   };
@@ -78,16 +72,18 @@ export function useTaskManager(taskId?: string): UseTaskManagerReturn {
         .from("tasks")
         .update({
           ...taskData,
-          due_date: date?.toISOString().split("T")[0],
+          due_date: date ? date.toISOString() : null,
           updated_at: new Date().toISOString(),
         })
         .eq("task_id", taskData.task_id);
 
       if (error) throw error;
-    } catch (error: any) {
-      console.error("Error saving task:", error);
-      setError(error.message);
-      throw error;
+
+      setError(null);
+    } catch (err: any) {
+      console.error("Error saving task:", err);
+      setError(err.message);
+      throw err;
     }
   };
 
@@ -97,19 +93,18 @@ export function useTaskManager(taskId?: string): UseTaskManagerReturn {
         throw new Error("File size must be less than 1MB");
       }
 
-      if (!task) throw new Error("No task found");
+      if (!task) {
+        throw new Error("No task found");
+      }
 
       const fileExt = file.name.split(".").pop();
       const fileName = `${task.user_id}/${task.task_id}.${fileExt}`;
+
       const { error: uploadError } = await supabase.storage
         .from("task-attachments")
         .upload(fileName, file, {
           upsert: true,
           contentType: file.type,
-          duplex: "half",
-          headers: {
-            "content-length": file.size.toString(),
-          },
         });
 
       if (uploadError) throw uploadError;
@@ -117,10 +112,11 @@ export function useTaskManager(taskId?: string): UseTaskManagerReturn {
       const updatedTask = { ...task, image_url: fileName };
       setTask(updatedTask);
       await saveTask(updatedTask);
-    } catch (error: any) {
-      console.error("Error uploading image:", error);
-      setError(error.message);
-      throw error;
+      setError(null);
+    } catch (err: any) {
+      console.error("Error uploading image:", err);
+      setError(err.message);
+      throw err;
     }
   };
 
@@ -128,42 +124,52 @@ export function useTaskManager(taskId?: string): UseTaskManagerReturn {
     try {
       if (!task?.image_url) throw new Error("No image to remove");
 
-      const fileName = task.image_url;
       const { error: storageError } = await supabase.storage
         .from("task-attachments")
-        .remove([fileName]);
+        .remove([task.image_url]);
 
       if (storageError) throw storageError;
 
       const updatedTask = { ...task, image_url: null };
       setTask(updatedTask);
       await saveTask(updatedTask);
-    } catch (error: any) {
-      console.error("Error removing image:", error);
-      setError(error.message);
-      throw error;
+      setError(null);
+    } catch (err: any) {
+      console.error("Error removing image:", err);
+      setError(err.message);
+      throw err;
     }
   };
 
-  // Task list operations
   const fetchTasks = async () => {
     try {
+      setIsLoading(true);
+
       const {
         data: { session },
+        error: sessionError,
       } = await supabase.auth.getSession();
+
+      if (sessionError) throw sessionError;
+      if (!session) {
+        setTasks([]);
+        setIsLoading(false);
+        return;
+      }
 
       const { data, error } = await supabase
         .from("tasks")
         .select("*")
-        .eq("user_id", session!.user.id)
+        .eq("user_id", session.user.id)
         .order("created_at", { ascending: false });
 
       if (error) throw error;
+
       setTasks(data || []);
       setError(null);
-    } catch (error: any) {
-      console.error("Error fetching tasks:", error);
-      setError(error.message);
+    } catch (err: any) {
+      console.error("Error fetching tasks:", err);
+      setError(err.message);
     } finally {
       setIsLoading(false);
     }
@@ -171,34 +177,24 @@ export function useTaskManager(taskId?: string): UseTaskManagerReturn {
 
   const createTask = async (title: string, description: string) => {
     try {
-      const {
-        data: { session },
-      } = await supabase.auth.getSession();
+      const { data, error } = await supabase.functions.invoke(
+        "create-task-with-ai",
+        {
+          body: { title, description },
+        }
+      );
 
-      const response = await fetch(FUNCTION_ENDPOINT, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${session!.access_token}`,
-        },
-        body: JSON.stringify({ title, description }),
-      });
-
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.message || "Failed to create task");
+      if (error) {
+        console.error("Edge function error:", error);
+        throw new Error(error.message || "Failed to call edge function");
       }
 
-      const taskData = await response.json();
-      if (!taskData) throw new Error("No data returned from server");
-
-      setTasks([taskData, ...tasks]);
       setError(null);
-      return taskData;
-    } catch (error: any) {
-      console.error("Error creating task:", error);
-      setError(error.message);
-      throw error;
+      return data as Task;
+    } catch (err: any) {
+      console.error("Error creating task:", err);
+      setError(err.message);
+      throw err;
     }
   };
 
@@ -210,12 +206,13 @@ export function useTaskManager(taskId?: string): UseTaskManagerReturn {
         .eq("task_id", taskIdToDelete);
 
       if (error) throw error;
-      setTasks(tasks.filter((t) => t.task_id !== taskIdToDelete));
+
+      setTasks((prev) => prev.filter((t) => t.task_id !== taskIdToDelete));
       setError(null);
-    } catch (error: any) {
-      console.error("Error deleting task:", error);
-      setError(error.message);
-      throw error;
+    } catch (err: any) {
+      console.error("Error deleting task:", err);
+      setError(err.message);
+      throw err;
     }
   };
 
@@ -230,40 +227,35 @@ export function useTaskManager(taskId?: string): UseTaskManagerReturn {
         .eq("task_id", taskIdToToggle);
 
       if (error) throw error;
-      setTasks(
-        tasks.map((t) =>
+
+      setTasks((prev) =>
+        prev.map((t) =>
           t.task_id === taskIdToToggle ? { ...t, completed } : t
         )
       );
       setError(null);
-    } catch (error: any) {
-      console.error("Error updating task:", error);
-      setError(error.message);
-      throw error;
+    } catch (err: any) {
+      console.error("Error updating task:", err);
+      setError(err.message);
+      throw err;
     }
   };
 
   const refreshTasks = async () => {
-    setIsLoading(true);
     await fetchTasks();
   };
 
   return {
-    // State
     task,
     tasks,
     date,
     error,
     isLoading,
-
-    // Single task operations
     setDate,
     updateTask,
     saveTask,
     uploadImage,
     removeImage,
-
-    // Task list operations
     createTask,
     deleteTask,
     toggleTaskComplete,
