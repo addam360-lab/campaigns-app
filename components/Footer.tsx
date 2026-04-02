@@ -1,16 +1,16 @@
 const Footer = () => {
   return (
-    <footer className="bg-transparent text-white py-4">
+    <footer className="bg-white text-auto py-4">
       <div className="container mx-auto px-4 text-center text-sm">
-        Task App by Pixegami 🛠️ View on{" "}
-        <a
-          href="https://github.com/pixegami/task-app-project"
+        Footer text {" "}
+        {/* <a
+          href="https:// ........"
           target="_blank"
           rel="noopener noreferrer"
           className="underline"
         >
-          GitHub
-        </a>
+          Link
+        </a> */}
       </div>
     </footer>
   );
